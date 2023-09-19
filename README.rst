@@ -35,7 +35,7 @@
 
 .. _main-readme:
 
-**NVIDIA NeMo**
+**NVIDIA NeMo - gk_main branch**
 ===============
 
 Introduction
