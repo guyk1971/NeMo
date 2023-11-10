@@ -129,6 +129,7 @@ venv.bak/
 
 # VSCode project settins
 .vscode/
+.vscode-server/
 
 # Spyder project settings
 .spyderproject
@@ -169,8 +170,9 @@ examples/*/wandb
 examples/*/data
 wandb
 dump.py
-
 docs/sources/source/test_build/
+lightning_logs/
+
 
 # Checkpoints, config files and temporary files created in tutorials.
 examples/neural_graphs/*.chkpt
