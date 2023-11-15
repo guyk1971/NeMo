@@ -9,7 +9,7 @@ cd $DIR
 MY_UID=$(id -u)
 MY_GID=$(id -g)
 MY_UNAME=$(id -un)
-IMAGE=nemo_${MY_UNAME}:reinst
+IMAGE=nemo_${MY_UNAME}:dev
 
 # mount the scratch folders : assuming you have a relative soft link to scratch created by  'ln -s ../scratch.gkoren_gpu scratch'
 EXTRA_MOUNTS=""

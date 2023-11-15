@@ -13,7 +13,7 @@ the flow is similar, the differences is in the file
 - `./env_scripts/docker_build_run_lws.sh` - this will build the image (if doesnt exit) and then run it  
 
 from inside the container:
-- `./reinstall.sh` - will install the NeMo from mapped source folder
+- `pip install -e .[all]` - will install the NeMo from mapped source folder
 
 At this point, you have a container with NeMo installed, ready for operation. 
 
