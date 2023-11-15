@@ -26,7 +26,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Union
 
 import numpy as np
@@ -441,13 +441,6 @@ class GreedyRNNTInfer(_GreedyRNNTInfer):
                 # If blank token is predicted, exit inner loop, move onto next timestep t
                 if k == self._blank_index:
                     not_blank = False
-
-                    if self.preserve_alignments:
-                        # convert Ti-th logits into a torch array
-                        hypothesis.alignments.append([])  # blank buffer for next timestep
-
-                    if self.preserve_frame_confidence:
-                        hypothesis.frame_confidence.append([])  # blank buffer for next timestep
                 else:
                     # Append token to label set, update RNN state.
                     hypothesis.y_sequence.append(k)
@@ -458,6 +451,13 @@ class GreedyRNNTInfer(_GreedyRNNTInfer):
 
                 # Increment token counter.
                 symbols_added += 1
+
+            if self.preserve_alignments:
+                # convert Ti-th logits into a torch array
+                hypothesis.alignments.append([])  # blank buffer for next timestep
+
+            if self.preserve_frame_confidence:
+                hypothesis.frame_confidence.append([])  # blank buffer for next timestep
 
         # Remove trailing empty list of Alignments
         if self.preserve_alignments:
@@ -642,9 +642,6 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
                 # frame_confidence is a 3-dimensional dangling list representing B x T x U
                 for hyp in hypotheses:
                     hyp.frame_confidence = [[]]
-                    hyp.y_3best = [[]]
-                    hyp.frame_confidence_3best = [[[]]]
-                    hyp.logp = [[]]
 
             # Last Label buffer + Last Label without blank buffer
             # batch level equivalent of the last_label
@@ -652,6 +649,7 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
 
             # Mask buffers
             blank_mask = torch.full([batchsize], fill_value=0, dtype=torch.bool, device=device)
+            blank_mask_prev = None
 
             # Get max sequence length
             max_out_len = out_len.max()
@@ -669,6 +667,8 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
                 # Batch: [B, T, D], but Bi may have seq len < max(seq_lens_in_batch)
                 # Forcibly mask with "blank" tokens, for all sample where current time step T > seq_len
                 blank_mask = time_idx >= out_len
+                blank_mask_prev = blank_mask.clone()
+
                 # Start inner loop
                 while not_blank and (self.max_symbols is None or symbols_added < self.max_symbols):
                     # Batch prediction and joint network steps
@@ -697,7 +697,6 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
                     # This is accumulating blanks over all time steps T and all target steps min(max_symbols, U)
                     k_is_blank = k == self._blank_index
                     blank_mask.bitwise_or_(k_is_blank)
-                    all_blanks = torch.all(blank_mask)
 
                     del k_is_blank
 
@@ -708,10 +707,9 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
                         logp_vals = logp.to('cpu')
                         logp_ids = logp_vals.max(1)[1]
                         for batch_idx, is_blank in enumerate(blank_mask):
-                            # we only want to update non-blanks, unless we are at the last step in the loop where
-                            # all elements produced blanks, otherwise there will be duplicate predictions
-                            # saved in alignments
-                            if time_idx < out_len[batch_idx] and (all_blanks or not is_blank):
+                            # we only want to update non-blanks and first-time blanks,
+                            # otherwise alignments will contain duplicate predictions
+                            if time_idx < out_len[batch_idx] and (not blank_mask_prev[batch_idx] or not is_blank):
                                 hypotheses[batch_idx].alignments[-1].append(
                                     (logp_vals[batch_idx], logp_ids[batch_idx])
                                 )
@@ -723,40 +721,16 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
                         # Insert probabilities into last timestep per sample
                         confidence = self._get_confidence(logp)
                         for batch_idx, is_blank in enumerate(blank_mask):
-                            if time_idx < out_len[batch_idx] and (all_blanks or not is_blank):
+                            if time_idx < out_len[batch_idx] and (not blank_mask_prev[batch_idx] or not is_blank):
                                 hypotheses[batch_idx].frame_confidence[-1].append(confidence[batch_idx])
                     del logp
 
+                    blank_mask_prev.bitwise_or_(blank_mask)
+
                     # If all samples predict / have predicted prior blanks, exit loop early
                     # This is equivalent to if single sample predicted k
-                    if all_blanks:
+                    if blank_mask.all():
                         not_blank = False
-
-                        # If preserving alignments, convert the current Uj alignments into a torch.Tensor
-                        # Then preserve U at current timestep Ti
-                        # Finally, forward the timestep history to Ti+1 for that sample
-                        # All of this should only be done iff the current time index <= sample-level AM length.
-                        # Otherwise ignore and move to next sample / next timestep.
-                        if self.preserve_alignments:
-
-                            # convert Ti-th logits into a torch array
-                            for batch_idx in range(batchsize):
-
-                                # this checks if current timestep <= sample-level AM length
-                                # If current timestep > sample-level AM length, no alignments will be added
-                                # Therefore the list of Uj alignments is empty here.
-                                if len(hypotheses[batch_idx].alignments[-1]) > 0:
-                                    hypotheses[batch_idx].alignments.append([])  # blank buffer for next timestep
-
-                        # Do the same if preserving per-frame confidence
-                        if self.preserve_frame_confidence:
-
-                            for batch_idx in range(batchsize):
-                                if len(hypotheses[batch_idx].frame_confidence[-1]) > 0:
-                                    hypotheses[batch_idx].frame_confidence.append([])  # blank buffer for next timestep
-                                    hypotheses[batch_idx].y_3best.append([])
-                                    hypotheses[batch_idx].frame_confidence_3best.append([])
-                                    hypotheses[batch_idx].logp.append([])
                     else:
                         # Collect batch indices where blanks occurred now/past
                         blank_indices = (blank_mask == 1).nonzero(as_tuple=False)
@@ -791,6 +765,29 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
                                 hypotheses[kidx].score += float(v[kidx])
                         symbols_added += 1
 
+                # If preserving alignments, convert the current Uj alignments into a torch.Tensor
+                # Then preserve U at current timestep Ti
+                # Finally, forward the timestep history to Ti+1 for that sample
+                # All of this should only be done iff the current time index <= sample-level AM length.
+                # Otherwise ignore and move to next sample / next timestep.
+                if self.preserve_alignments:
+
+                    # convert Ti-th logits into a torch array
+                    for batch_idx in range(batchsize):
+
+                        # this checks if current timestep <= sample-level AM length
+                        # If current timestep > sample-level AM length, no alignments will be added
+                        # Therefore the list of Uj alignments is empty here.
+                        if len(hypotheses[batch_idx].alignments[-1]) > 0:
+                            hypotheses[batch_idx].alignments.append([])  # blank buffer for next timestep
+
+                # Do the same if preserving per-frame confidence
+                if self.preserve_frame_confidence:
+
+                    for batch_idx in range(batchsize):
+                        if len(hypotheses[batch_idx].frame_confidence[-1]) > 0:
+                            hypotheses[batch_idx].frame_confidence.append([])  # blank buffer for next timestep
+
             # Remove trailing empty list of alignments at T_{am-len} x Uj
             if self.preserve_alignments:
                 for batch_idx in range(batchsize):
@@ -802,9 +799,6 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
                 for batch_idx in range(batchsize):
                     if len(hypotheses[batch_idx].frame_confidence[-1]) == 0:
                         del hypotheses[batch_idx].frame_confidence[-1]
-                        del hypotheses[batch_idx].y_3best[-1]
-                        del hypotheses[batch_idx].frame_confidence_3best[-1]
-                        del hypotheses[batch_idx].logp[-1]
 
         # Preserve states
         for batch_idx in range(batchsize):
@@ -856,6 +850,7 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
 
         # Mask buffers
         blank_mask = torch.full([batchsize], fill_value=0, dtype=torch.bool, device=device)
+        blank_mask_prev = None
 
         # Get max sequence length
         max_out_len = out_len.max()
@@ -875,6 +870,7 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
                 # Batch: [B, T, D], but Bi may have seq len < max(seq_lens_in_batch)
                 # Forcibly mask with "blank" tokens, for all sample where current time step T > seq_len
                 blank_mask = time_idx >= out_len
+                blank_mask_prev = blank_mask.clone()
 
                 # Start inner loop
                 while not_blank and (self.max_symbols is None or symbols_added < self.max_symbols):
@@ -913,7 +909,6 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
                     # This is accumulating blanks over all time steps T and all target steps min(max_symbols, U)
                     k_is_blank = k == self._blank_index
                     blank_mask.bitwise_or_(k_is_blank)
-                    all_blanks = torch.all(blank_mask)
 
                     # If preserving alignments, check if sequence length of sample has been reached
                     # before adding alignment
@@ -922,10 +917,9 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
                         logp_vals = logp.to('cpu')
                         logp_ids = logp_vals.max(1)[1]
                         for batch_idx, is_blank in enumerate(blank_mask):
-                            # we only want to update non-blanks, unless we are at the last step in the loop where
-                            # all elements produced blanks, otherwise there will be duplicate predictions
-                            # saved in alignments
-                            if time_idx < out_len[batch_idx] and (all_blanks or not is_blank):
+                            # we only want to update non-blanks and first-time blanks,
+                            # otherwise alignments will contain duplicate predictions
+                            if time_idx < out_len[batch_idx] and (not blank_mask_prev[batch_idx] or not is_blank):
                                 hypotheses[batch_idx].alignments[-1].append(
                                     (logp_vals[batch_idx], logp_ids[batch_idx])
                                 )
@@ -938,37 +932,16 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
                         # Insert probabilities into last timestep per sample
                         confidence = self._get_confidence(logp)
                         for batch_idx, is_blank in enumerate(blank_mask):
-                            if time_idx < out_len[batch_idx] and (all_blanks or not is_blank):
+                            if time_idx < out_len[batch_idx] and (not blank_mask_prev[batch_idx] or not is_blank):
                                 hypotheses[batch_idx].frame_confidence[-1].append(confidence[batch_idx])
                     del logp
+
+                    blank_mask_prev.bitwise_or_(blank_mask)
 
                     # If all samples predict / have predicted prior blanks, exit loop early
                     # This is equivalent to if single sample predicted k
                     if blank_mask.all():
                         not_blank = False
-
-                        # If preserving alignments, convert the current Uj alignments into a torch.Tensor
-                        # Then preserve U at current timestep Ti
-                        # Finally, forward the timestep history to Ti+1 for that sample
-                        # All of this should only be done iff the current time index <= sample-level AM length.
-                        # Otherwise ignore and move to next sample / next timestep.
-                        if self.preserve_alignments:
-
-                            # convert Ti-th logits into a torch array
-                            for batch_idx in range(batchsize):
-
-                                # this checks if current timestep <= sample-level AM length
-                                # If current timestep > sample-level AM length, no alignments will be added
-                                # Therefore the list of Uj alignments is empty here.
-                                if len(hypotheses[batch_idx].alignments[-1]) > 0:
-                                    hypotheses[batch_idx].alignments.append([])  # blank buffer for next timestep
-
-                        # Do the same if preserving per-frame confidence
-                        if self.preserve_frame_confidence:
-
-                            for batch_idx in range(batchsize):
-                                if len(hypotheses[batch_idx].frame_confidence[-1]) > 0:
-                                    hypotheses[batch_idx].frame_confidence.append([])  # blank buffer for next timestep
                     else:
                         # Collect batch indices where blanks occurred now/past
                         blank_indices = (blank_mask == 1).nonzero(as_tuple=False)
@@ -1003,6 +976,29 @@ class GreedyBatchedRNNTInfer(_GreedyRNNTInfer):
                                 hypotheses[kidx].score += float(v[kidx])
 
                     symbols_added += 1
+
+                # If preserving alignments, convert the current Uj alignments into a torch.Tensor
+                # Then preserve U at current timestep Ti
+                # Finally, forward the timestep history to Ti+1 for that sample
+                # All of this should only be done iff the current time index <= sample-level AM length.
+                # Otherwise ignore and move to next sample / next timestep.
+                if self.preserve_alignments:
+
+                    # convert Ti-th logits into a torch array
+                    for batch_idx in range(batchsize):
+
+                        # this checks if current timestep <= sample-level AM length
+                        # If current timestep > sample-level AM length, no alignments will be added
+                        # Therefore the list of Uj alignments is empty here.
+                        if len(hypotheses[batch_idx].alignments[-1]) > 0:
+                            hypotheses[batch_idx].alignments.append([])  # blank buffer for next timestep
+
+                # Do the same if preserving per-frame confidence
+                if self.preserve_frame_confidence:
+
+                    for batch_idx in range(batchsize):
+                        if len(hypotheses[batch_idx].frame_confidence[-1]) > 0:
+                            hypotheses[batch_idx].frame_confidence.append([])  # blank buffer for next timestep
 
         # Remove trailing empty list of alignments at T_{am-len} x Uj
         if self.preserve_alignments:
@@ -1624,13 +1620,6 @@ class GreedyMultiblankRNNTInfer(GreedyRNNTInfer):
                 # If any type of blank token is predicted, exit inner loop, move onto next timestep t
                 if k >= self._blank_index - len(self.big_blank_durations):
                     not_blank = False
-
-                    if self.preserve_alignments:
-                        # convert Ti-th logits into a torch array
-                        hypothesis.alignments.append([])  # blank buffer for next timestep
-
-                    if self.preserve_frame_confidence:
-                        hypothesis.frame_confidence.append([])  # blank buffer for next timestep
                 else:
                     # Append token to label set, update RNN state.
                     hypothesis.y_sequence.append(k)
@@ -1641,6 +1630,13 @@ class GreedyMultiblankRNNTInfer(GreedyRNNTInfer):
 
                 # Increment token counter.
                 symbols_added += 1
+
+            if self.preserve_alignments:
+                # convert Ti-th logits into a torch array
+                hypothesis.alignments.append([])  # blank buffer for next timestep
+
+            if self.preserve_frame_confidence:
+                hypothesis.frame_confidence.append([])  # blank buffer for next timestep
 
         # Remove trailing empty list of Alignments
         if self.preserve_alignments:
@@ -1781,9 +1777,6 @@ class GreedyBatchedMultiblankRNNTInfer(GreedyBatchedRNNTInfer):
                 # frame_confidence is a 3-dimensional dangling list representing B x T x U
                 for hyp in hypotheses:
                     hyp.frame_confidence = [[]]
-                    hyp.y_3best = [[]]
-                    hyp.frame_confidence_3best = [[[]]]
-                    hyp.logp = [[]]
 
             # Last Label buffer + Last Label without blank buffer
             # batch level equivalent of the last_label
@@ -1897,40 +1890,6 @@ class GreedyBatchedMultiblankRNNTInfer(GreedyBatchedRNNTInfer):
                     # This is equivalent to if single sample predicted k
                     if blank_mask.all():
                         not_blank = False
-
-                        for i in range(len(big_blank_masks) + 1):
-                            # The task here is find the shortest blank duration of all batches.
-                            # so we start from the shortest blank duration and go up,
-                            # and stop once we found the duration whose corresponding mask isn't all True.
-                            if i == len(big_blank_masks) or not big_blank_masks[i].all():
-                                big_blank_duration = self.big_blank_durations[i - 1] if i > 0 else 1
-                                break
-
-                        # If preserving alignments, convert the current Uj alignments into a torch.Tensor
-                        # Then preserve U at current timestep Ti
-                        # Finally, forward the timestep history to Ti+1 for that sample
-                        # All of this should only be done iff the current time index <= sample-level AM length.
-                        # Otherwise ignore and move to next sample / next timestep.
-                        if self.preserve_alignments:
-
-                            # convert Ti-th logits into a torch array
-                            for batch_idx in range(batchsize):
-
-                                # this checks if current timestep <= sample-level AM length
-                                # If current timestep > sample-level AM length, no alignments will be added
-                                # Therefore the list of Uj alignments is empty here.
-                                if len(hypotheses[batch_idx].alignments[-1]) > 0:
-                                    hypotheses[batch_idx].alignments.append([])  # blank buffer for next timestep
-
-                        # Do the same if preserving per-frame confidence
-                        if self.preserve_frame_confidence:
-
-                            for batch_idx in range(batchsize):
-                                if len(hypotheses[batch_idx].frame_confidence[-1]) > 0:
-                                    hypotheses[batch_idx].frame_confidence.append([])  # blank buffer for next timestep
-                                    hypotheses[batch_idx].y_3best.append([])
-                                    hypotheses[batch_idx].frame_confidence_3best.append([])
-                                    hypotheses[batch_idx].logp.append([])
                     else:
                         # Collect batch indices where blanks occurred now/past
                         blank_indices = (blank_mask == 1).nonzero(as_tuple=False)
@@ -1966,6 +1925,37 @@ class GreedyBatchedMultiblankRNNTInfer(GreedyBatchedRNNTInfer):
 
                         symbols_added += 1
 
+                for i in range(len(big_blank_masks) + 1):
+                    # The task here is find the shortest blank duration of all batches.
+                    # so we start from the shortest blank duration and go up,
+                    # and stop once we found the duration whose corresponding mask isn't all True.
+                    if i == len(big_blank_masks) or not big_blank_masks[i].all():
+                        big_blank_duration = self.big_blank_durations[i - 1] if i > 0 else 1
+                        break
+
+                # If preserving alignments, convert the current Uj alignments into a torch.Tensor
+                # Then preserve U at current timestep Ti
+                # Finally, forward the timestep history to Ti+1 for that sample
+                # All of this should only be done iff the current time index <= sample-level AM length.
+                # Otherwise ignore and move to next sample / next timestep.
+                if self.preserve_alignments:
+
+                    # convert Ti-th logits into a torch array
+                    for batch_idx in range(batchsize):
+
+                        # this checks if current timestep <= sample-level AM length
+                        # If current timestep > sample-level AM length, no alignments will be added
+                        # Therefore the list of Uj alignments is empty here.
+                        if len(hypotheses[batch_idx].alignments[-1]) > 0:
+                            hypotheses[batch_idx].alignments.append([])  # blank buffer for next timestep
+
+                # Do the same if preserving per-frame confidence
+                if self.preserve_frame_confidence:
+
+                    for batch_idx in range(batchsize):
+                        if len(hypotheses[batch_idx].frame_confidence[-1]) > 0:
+                            hypotheses[batch_idx].frame_confidence.append([])  # blank buffer for next timestep
+
             # Remove trailing empty list of alignments at T_{am-len} x Uj
             if self.preserve_alignments:
                 for batch_idx in range(batchsize):
@@ -1977,9 +1967,6 @@ class GreedyBatchedMultiblankRNNTInfer(GreedyBatchedRNNTInfer):
                 for batch_idx in range(batchsize):
                     if len(hypotheses[batch_idx].frame_confidence[-1]) == 0:
                         del hypotheses[batch_idx].frame_confidence[-1]
-                        del hypotheses[batch_idx].y_3best[-1]
-                        del hypotheses[batch_idx].frame_confidence_3best[-1]
-                        del hypotheses[batch_idx].logp[-1]
 
         # Preserve states
         for batch_idx in range(batchsize):
@@ -2121,29 +2108,6 @@ class GreedyBatchedMultiblankRNNTInfer(GreedyBatchedRNNTInfer):
                     # This is equivalent to if single sample predicted k
                     if blank_mask.all():
                         not_blank = False
-
-                        # If preserving alignments, convert the current Uj alignments into a torch.Tensor
-                        # Then preserve U at current timestep Ti
-                        # Finally, forward the timestep history to Ti+1 for that sample
-                        # All of this should only be done iff the current time index <= sample-level AM length.
-                        # Otherwise ignore and move to next sample / next timestep.
-                        if self.preserve_alignments:
-
-                            # convert Ti-th logits into a torch array
-                            for batch_idx in range(batchsize):
-
-                                # this checks if current timestep <= sample-level AM length
-                                # If current timestep > sample-level AM length, no alignments will be added
-                                # Therefore the list of Uj alignments is empty here.
-                                if len(hypotheses[batch_idx].alignments[-1]) > 0:
-                                    hypotheses[batch_idx].alignments.append([])  # blank buffer for next timestep
-
-                        # Do the same if preserving per-frame confidence
-                        if self.preserve_frame_confidence:
-
-                            for batch_idx in range(batchsize):
-                                if len(hypotheses[batch_idx].frame_confidence[-1]) > 0:
-                                    hypotheses[batch_idx].frame_confidence.append([])  # blank buffer for next timestep
                     else:
                         # Collect batch indices where blanks occurred now/past
                         blank_indices = (blank_mask == 1).nonzero(as_tuple=False)
@@ -2179,6 +2143,29 @@ class GreedyBatchedMultiblankRNNTInfer(GreedyBatchedRNNTInfer):
 
                     symbols_added += 1
 
+                # If preserving alignments, convert the current Uj alignments into a torch.Tensor
+                # Then preserve U at current timestep Ti
+                # Finally, forward the timestep history to Ti+1 for that sample
+                # All of this should only be done iff the current time index <= sample-level AM length.
+                # Otherwise ignore and move to next sample / next timestep.
+                if self.preserve_alignments:
+
+                    # convert Ti-th logits into a torch array
+                    for batch_idx in range(batchsize):
+
+                        # this checks if current timestep <= sample-level AM length
+                        # If current timestep > sample-level AM length, no alignments will be added
+                        # Therefore the list of Uj alignments is empty here.
+                        if len(hypotheses[batch_idx].alignments[-1]) > 0:
+                            hypotheses[batch_idx].alignments.append([])  # blank buffer for next timestep
+
+                # Do the same if preserving per-frame confidence
+                if self.preserve_frame_confidence:
+
+                    for batch_idx in range(batchsize):
+                        if len(hypotheses[batch_idx].frame_confidence[-1]) > 0:
+                            hypotheses[batch_idx].frame_confidence.append([])  # blank buffer for next timestep
+
         # Remove trailing empty list of alignments at T_{am-len} x Uj
         if self.preserve_alignments:
             for batch_idx in range(batchsize):
@@ -2203,7 +2190,7 @@ class GreedyRNNTInferConfig:
     max_symbols_per_step: Optional[int] = 10
     preserve_alignments: bool = False
     preserve_frame_confidence: bool = False
-    confidence_method_cfg: Optional[ConfidenceMethodConfig] = ConfidenceMethodConfig()
+    confidence_method_cfg: Optional[ConfidenceMethodConfig] = field(default_factory=lambda: ConfidenceMethodConfig())
 
     def __post_init__(self):
         # OmegaConf.structured ensures that post_init check is always executed
@@ -2219,7 +2206,7 @@ class GreedyBatchedRNNTInferConfig:
     max_symbols_per_step: Optional[int] = 10
     preserve_alignments: bool = False
     preserve_frame_confidence: bool = False
-    confidence_method_cfg: Optional[ConfidenceMethodConfig] = ConfidenceMethodConfig()
+    confidence_method_cfg: Optional[ConfidenceMethodConfig] = field(default_factory=lambda: ConfidenceMethodConfig())
 
     def __post_init__(self):
         # OmegaConf.structured ensures that post_init check is always executed
@@ -2443,19 +2430,6 @@ class GreedyTDTInfer(_GreedyRNNTInfer):
                 # If blank token is predicted, exit inner loop, move onto next timestep t
                 if k == self._blank_index:
                     not_blank = False
-
-                    # this rarely happens, but we manually increment the `skip` number
-                    # if blank is emitted and duration=0 is predicted. This prevents possible
-                    # infinite loops.
-                    if skip == 0:
-                        skip = 1
-
-                    if self.preserve_alignments:
-                        # convert Ti-th logits into a torch array
-                        hypothesis.alignments.append([])  # blank buffer for next timestep
-
-                    if self.preserve_frame_confidence:
-                        hypothesis.frame_confidence.append([])  # blank buffer for next timestep
                 else:
                     # Append token to label set, update RNN state.
                     hypothesis.y_sequence.append(k)
@@ -2468,6 +2442,19 @@ class GreedyTDTInfer(_GreedyRNNTInfer):
                 symbols_added += 1
                 time_idx += skip
                 need_loop = skip == 0
+
+            # this rarely happens, but we manually increment the `skip` number
+            # if blank is emitted and duration=0 is predicted. This prevents possible
+            # infinite loops.
+            if skip == 0:
+                skip = 1
+
+            if self.preserve_alignments:
+                # convert Ti-th logits into a torch array
+                hypothesis.alignments.append([])  # blank buffer for next timestep
+
+            if self.preserve_frame_confidence:
+                hypothesis.frame_confidence.append([])  # blank buffer for next timestep
 
             if symbols_added == self.max_symbols:
                 time_idx += 1
@@ -2652,9 +2639,6 @@ class GreedyBatchedTDTInfer(_GreedyRNNTInfer):
                 # frame_confidence is a 3-dimensional dangling list representing B x T x U
                 for hyp in hypotheses:
                     hyp.frame_confidence = [[]]
-                    hyp.y_3best = [[]]
-                    hyp.frame_confidence_3best = [[[]]]
-                    hyp.logp = [[]]
 
             # Last Label buffer + Last Label without blank buffer
             # batch level equivalent of the last_label
@@ -2781,9 +2765,6 @@ class GreedyBatchedTDTInfer(_GreedyRNNTInfer):
                 for batch_idx in range(batchsize):
                     if len(hypotheses[batch_idx].frame_confidence[-1]) == 0:
                         del hypotheses[batch_idx].frame_confidence[-1]
-                        del hypotheses[batch_idx].y_3best[-1]
-                        del hypotheses[batch_idx].frame_confidence_3best[-1]
-                        del hypotheses[batch_idx].logp[-1]
 
         # Preserve states
         for batch_idx in range(batchsize):
