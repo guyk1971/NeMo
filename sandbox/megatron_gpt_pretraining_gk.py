@@ -32,12 +32,12 @@ def main(cfg) -> None:
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f'\n{OmegaConf.to_yaml(cfg)}')
 
-    # trainer = MegatronTrainerBuilder(cfg).create_trainer()
-    # exp_manager(trainer, cfg.exp_manager)
+    trainer = MegatronTrainerBuilder(cfg).create_trainer()
+    exp_manager(trainer, cfg.exp_manager)
 
-    # model = MegatronGPTModel(cfg.model, trainer)
+    model = MegatronGPTModel(cfg.model, trainer)
 
-    # trainer.fit(model)
+    trainer.fit(model)
 
 
 if __name__ == '__main__':
