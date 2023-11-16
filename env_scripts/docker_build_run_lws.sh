@@ -6,7 +6,7 @@ cd $DIR
 MY_UID=$(id -u)
 MY_GID=$(id -g)
 MY_UNAME=$(id -un)
-BASE_IMAGE=nvcr.io/nvidia/pytorch:23.08-py3
+BASE_IMAGE=nvcr.io/nvidia/pytorch:23.09-py3
 mkdir -p ${DIR}/.vscode-server
 LINK=$(realpath --relative-to="/home/${MY_UNAME}" "$DIR" -s)
 IMAGE=nemo_${MY_UNAME}
