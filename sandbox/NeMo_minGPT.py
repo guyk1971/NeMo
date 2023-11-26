@@ -5,6 +5,10 @@ from nemo.core import typecheck
 from nemo.core.neural_types import NeuralType
 from nemo.core.neural_types import *
 
+from nemo.collections.nlp.modules.common.tokenizer_utils import get_tokenizer
+from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import build_train_valid_test_datasets
+
+
 import math
 from typing import List, Set, Dict, Tuple, Optional
 import torch.nn as nn
