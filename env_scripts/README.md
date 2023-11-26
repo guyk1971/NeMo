@@ -33,9 +33,16 @@ where:
 write down the `image_name` and update it in the `docker_run_lws.sh` and `docker_run_lws_multi.sh`.
 in this case, I set the image name  `nemo_${MY_UNAME}:reinst`
 
+Note that if you want to push the docker to gitlab container registry, you need to tag the image with the appropriate name, and make sure you have defined an access token with Developer role with `write registry` permissions
+```
+docker tag <current image name> gitlab-master.nvidia.com:5005/gkoren/nemo:dev_gkoren
+docker login gitlab-master.nvidia.com:5005 -u <my_user_name> -p <my_access_token>
+docker push gitlab-master.nvidia.com:5005/gkoren/nemo:dev_gkoren
+```
+
 
 
 ### Running the docker image (reinst)
-once the nemo has been installed within the image, you can run the `docker_run_lws.sh` script to create a singleton container (that has unique name and port mapped s.t. you can use tensorboard and jupyter)
+once the nemo has been installed within the image, you can run the `docker_run_<cl|lws>.sh` script to create a singleton container (that has unique name and port mapped s.t. you can use tensorboard and jupyter)
 
-if you want to run several containers in parallel, you need to remove any unique mapping/naming. for that, use the `docker_run_lws_multi.sh`
+if you want to run several containers in parallel, you need to remove any unique mapping/naming. for that, use the `docker_run_<cl|lws>_multi.sh`
