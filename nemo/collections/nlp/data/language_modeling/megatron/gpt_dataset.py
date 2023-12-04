@@ -646,12 +646,13 @@ def _build_index_mappings(
                 raise ImportError(
                     f'Could not compile megatron dataset C++ helper functions and therefore cannot import helpers python file.'
                 )
-
+            # GK Debug start: replacing to python version for debug
             sample_idx = helpers.build_sample_idx(
                 sizes, doc_idx, seq_length, num_epochs, tokens_per_epoch, drop_last, add_extra_token
             )
             # sample_idx = _build_sample_idx(sizes, doc_idx, seq_length,
             #                              num_epochs, tokens_per_epoch, drop_last, add_extra_token)
+            # GK Debug end
             np.save(sample_idx_filename, sample_idx, allow_pickle=True)
             logging.info(
                 ' > elasped time to build and save sample-idx mapping '
@@ -822,3 +823,23 @@ def _build_shuffle_idx(num_samples, total_size, np_rng):
     np_rng.shuffle(shuffle_idx_last)
 
     return np.concatenate((shuffle_idx_first, shuffle_idx_last))
+
+
+
+
+
+if __name__=='__main__':
+    import numpy as np
+
+    sizes=np.ones(4000)*1023
+    sizes = sizes.astype(int)
+    num_epochs=224
+    doc_idx=np.tile(np.arange(3600),num_epochs)
+    seq_length=1024
+    num_epochs=224
+    tokens_per_epoch=3682800
+    drop_last=True
+    add_extra_token=1
+    sample_idx = _build_sample_idx(sizes, doc_idx, seq_length,num_epochs, tokens_per_epoch, drop_last, add_extra_token)
+
+    print('done')
