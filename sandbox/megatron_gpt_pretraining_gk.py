@@ -15,7 +15,7 @@
 
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf, open_dict
-
+from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from megatron_gpt_sar_model import MegatronGPTSARModel
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
 from nemo.core.config import hydra_runner
@@ -36,6 +36,7 @@ def main(cfg) -> None:
     exp_manager(trainer, cfg.exp_manager)
 
     model = MegatronGPTSARModel(cfg.model, trainer)
+    # model = MegatronGPTModel(cfg.model, trainer)
 
     trainer.fit(model)
 
