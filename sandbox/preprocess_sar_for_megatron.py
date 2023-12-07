@@ -64,8 +64,8 @@ def main():
     # processing train
     train_tensor = torch.load(args.input_train_fn)
     print(f'loaded tensor shape: {train_tensor.shape}')
-    output_file_path = os.path.join(input_path,f'train_sar_{vocab_size}_{seq_len}.jsonl')
-    print(f'generating {output_file_path}')
+    train_file_path = os.path.join(input_path,f'train_sar_{vocab_size}_{seq_len}.jsonl')
+    print(f'generating {train_file_path}')
     tnp=train_tensor.numpy()
     crop=2*args.crop    # cropping args.crop pairs of values
     # take the list token from tnp[:,1,:] and concat to tnp[:,0,:] from the bos
@@ -73,15 +73,15 @@ def main():
     print(f'train tensor shape: {tnp.shape}')
     # generate train.json
     dict2jsn=[{'text':" ".join([str(i) for i in tnp[j,:]])} for j in range(len(tnp)) ]   
-    write_jsonl_file(output_file_path, dict2jsn)
+    write_jsonl_file(train_file_path, dict2jsn)
 
     # generate the tokenizer
     
     sar_vocab = {str(i):i for i in range(vocab_size)}
     fname=f'sar-vocab-{vocab_size}.txt'
-    file_path = os.path.join(input_path,fname)
-    write_vocab_file(file_path, sar_vocab)
-    print(f'generating vocab file: {file_path}')
+    vocab_file_path = os.path.join(input_path,fname)
+    write_vocab_file(vocab_file_path, sar_vocab)
+    print(f'generating vocab file: {vocab_file_path}')
 
 
 
@@ -89,18 +89,23 @@ def main():
         # process test tensor
         tst_file_name=args.input_train_fn.replace('train','test')
         if os.path.exists(tst_file_name):
-            output_file_path = os.path.join(input_path,f'test_sar_{vocab_size}_{seq_len}.jsonl')
-            print(f'generating {output_file_path}')
+            validation_file_path = os.path.join(input_path,f'test_sar_{vocab_size}_{seq_len}.jsonl')
+            print(f'generating {validation_file_path}')
             tst_tensor = torch.load(tst_file_name)
             tnp=tst_tensor.numpy()
             tnp=np.concatenate((tnp[:,0,crop:],tnp[:,1,-1].reshape(-1,1)),axis=-1)
             # generate test.json
             dict2jsn=[{'text':" ".join([str(i) for i in tnp[j,:]])} for j in range(len(tnp)) ]
-            write_jsonl_file(output_file_path, dict2jsn)
+            write_jsonl_file(validation_file_path, dict2jsn)
         else:
             print(f'{tst_file_name} not found. skipping generation')
     
     print(f'done {args.input_train_fn}')
+    print('to complete the preparation run the following python script from the project root folder: \n')
+    print(f"python scripts/nlp_language_modeling/preprocess_data_for_megatron.py --input={train_file_path} --tokenizer-library=megatron --vocab-file={vocab_file_path} --dataset-impl=mmap --tokenizer-type=word --output-prefix={input_path}/sar_gpt_training_data --workers=32")
+    print(f"python scripts/nlp_language_modeling/preprocess_data_for_megatron.py --input={validation_file_path} --tokenizer-library=megatron --vocab-file={vocab_file_path} --dataset-impl=mmap --tokenizer-type=word --output-prefix={input_path}/sar_gpt_validation_data --workers=32")
+
+
 
 
 if __name__ == '__main__':
