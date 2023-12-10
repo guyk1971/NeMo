@@ -15,11 +15,11 @@ trainer:
   max_epochs: -1 # PTL default. In practice, max_steps will be reached first. 
   max_steps: 100000 # consumed_samples = global_step * micro_batch_size * data_parallel_size * accumulate_grad_batches
   log_every_n_steps: 10
-  val_check_interval: 1000
-  limit_val_batches: 125
+  val_check_interval: 250
+  limit_val_batches: 1.0
   limit_test_batches: 0
   accumulate_grad_batches: 1 # do not modify, grad acc is automatic for training megatron models
-  gradient_clip_val: 1.0
+  gradient_clip_val: 0.0
   benchmark: False
   enable_model_summary: False # default PTL callback for this does not support model parallelism, instead we log manually
 
@@ -50,8 +50,8 @@ model:
 
   # specify micro_batch_size, global_batch_size, and model parallelism
   # gradient accumulation will be done automatically based on data_parallel_size
-  micro_batch_size: 4 # limited by GPU memory
-  global_batch_size: 8 # will use more micro batches to reach global batch size
+  micro_batch_size: 16 # limited by GPU memory
+  global_batch_size: 16 # will use more micro batches to reach global batch size
   rampup_batch_size: null # Should be a list of 3 values: [<start_batch_size>, <batch_size_increment>, <rampup_samples>]
   tensor_model_parallel_size: 1 # intra-layer model parallelism
   pipeline_model_parallel_size: 1 # inter-layer model parallelism
@@ -74,7 +74,7 @@ model:
   normalization: 'layernorm' # Normalization layer to use. Options are 'layernorm', 'rmsnorm'
   layernorm_epsilon: 1e-5
   do_layer_norm_weight_decay: False # True means weight decay on all params
-  make_vocab_size_divisible_by: 128 # Pad the vocab size to be divisible by this value for computation efficiency.
+  make_vocab_size_divisible_by: 64 # Pad the vocab size to be divisible by this value for computation efficiency.
   pre_process: True # add embedding
   post_process: True # add pooler
   persist_layer_norm: True # Use of persistent fused layer norm kernel.
@@ -237,15 +237,15 @@ model:
     gen_shape: False # Generate model and kernel details including input shapes
   
   optim:
-    name: distributed_fused_adam
+    name: adamw
     lr: 5e-4
     weight_decay: 0.1 
     betas: 
     - 0.9
-    - 0.98
+    - 0.999
     sched:
       name: CosineAnnealing
-      warmup_steps: 500
+      warmup_steps: 5000
       constant_steps: 50000
       min_lr: 5e-5
 
