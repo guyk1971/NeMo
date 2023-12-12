@@ -70,3 +70,11 @@ class WordTokenizer(CharTokenizer):
     def ids_to_text(self, ids):
         ids_ = [id_ for id_ in ids if id_ not in self.special_tokens]
         return " ".join(self.ids_to_tokens(ids_))
+
+
+    def check_token_from_file(self,token, vocab_file, line_i):
+        if not isinstance(token, str):
+            raise ValueError(
+                f"Each line in vocabulary have to be a Python string literal. "
+                f"Encountered {repr(token)} on line {line_i} in file {vocab_file}."
+            )

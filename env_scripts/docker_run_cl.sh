@@ -9,8 +9,7 @@ cd $DIR
 MY_UID=$(id -u)
 MY_GID=$(id -g)
 MY_UNAME=$(id -un)
-IMAGE=nemo_${MY_UNAME}:dev
-
+IMAGE=gitlab-master.nvidia.com:5005/gkoren/nemo:dev_${MY_UNAME}
 # mount the scratch folders : assuming you have a relative soft link to scratch created by  'ln -s ../scratch.gkoren_gpu scratch'
 EXTRA_MOUNTS=""
 if [ -d "/home/${MY_UNAME}/scratch" ]; then

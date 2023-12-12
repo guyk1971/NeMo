@@ -235,7 +235,8 @@ class CharTokenizer(TokenizerSpec):
         )
         return special_tokens_dict
 
-    @staticmethod
+    # @staticmethod
+    @classmethod
     def check_token_from_file(token, vocab_file, line_i):
         if not isinstance(token, str) or isinstance(token, str) and len(token) != 1:
             raise ValueError(
