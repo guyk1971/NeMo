@@ -557,7 +557,7 @@ class NeMoGPT_SAR(BasicNeMoGPT):
 
 
 
-DATASET="SAR"       # can be either SAR or TS
+DATASET="TS"       # can be either SAR or TS
 
 # TS - TinyShakespear
 if DATASET=='TS':  # TS - TinyShakespear
@@ -625,7 +625,7 @@ if DATASET=='TS':  # TS - TinyShakespear
         'num_nodes': 1,
         'accelerator': 'gpu',
         'precision': 16,
-        'max_epochs': 40,
+        'max_epochs': 100,
         'enable_checkpointing': False,
         'use_distributed_sampler': False,
         # 'max_epochs': -1, # PTL default. In practice, max_steps will be reached first. 
@@ -702,7 +702,7 @@ elif DATASET=='SAR': # Synthetic Associative Recall
         'num_nodes': 1,
         'accelerator': 'gpu',
         'precision': 16,
-        'max_epochs': 40,
+        'max_epochs': 100,
         'enable_checkpointing': False,
         'use_distributed_sampler': False,
         # 'max_epochs': -1, # PTL default. In practice, max_steps will be reached first. 
@@ -725,12 +725,17 @@ elif DATASET=='SAR': # Synthetic Associative Recall
 wandb_logger=None
 
 trainer = ptl.Trainer(**trainer_config,logger=wandb_logger)
+tester = ptl.Trainer(devices=1, accelerator=accelerator, logger=None, limit_test_batches=1.0)
+
+# test the model before training:
+tester.test(model)
+
+
 # train the model:
 trainer.fit(model)
 # wandb.finish()
 
-# test the model:
-tester = ptl.Trainer(devices=1, accelerator=accelerator, logger=None, limit_test_batches=1.0)
+# test the model after training:
 tester.test(model)
 
 # saving and reloading the model

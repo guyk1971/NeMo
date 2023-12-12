@@ -172,7 +172,7 @@ wandb
 dump.py
 docs/sources/source/test_build/
 lightning_logs/
-
+sandbox/text/
 
 # Checkpoints, config files and temporary files created in tutorials.
 examples/neural_graphs/*.chkpt
